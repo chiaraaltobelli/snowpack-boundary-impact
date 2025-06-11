@@ -1,0 +1,19 @@
+name: snowpack-model
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - xarray
+  - netcdf4
+  - numpy
+  - pandas
+  - matplotlib
+  - jupyter
+  - dask
+  - cartopy
+  - wrf-python
+  - cftime
+  - scipy
+  - tqdm        # progress bars — useful for batch processing
+  - ipykernel   # enables using this env as a Jupyter kernel
+
