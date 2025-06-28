@@ -24,6 +24,7 @@ def fix_accum_reset(accum, threshold=100.0):
     return d.sum(dim='Time')
 
 # === HELPER TO PLOT DATA WITH GEOGRAPHIC FEATURES ===
+#TODO make geographic features optional
 def plot_cartopy(lons, lats, data, title,
                  cmap="viridis", vmin=None, vmax=None, alpha=0.6):
     fig = plt.figure(figsize=(10,6))
@@ -41,6 +42,7 @@ def plot_cartopy(lons, lats, data, title,
     cbar.set_label(title)
 
     # === ADD GEOGRPAHIC FEATURES ====
+    #TODO - review lake and river display 
     feat_kw = dict(zorder=2, linewidth=0.8)
     ax.add_feature(cfeature.COASTLINE.with_scale("110m"), **feat_kw)
     ax.add_feature(cfeature.BORDERS.with_scale("110m"),
