@@ -1,33 +1,46 @@
+import numpy as np
 import matplotlib.pyplot as plt
-import geopandas as gpd
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
-def plot_with_state_outline(lons, lats, data_array, title, cmap="viridis", vmin=None, vmax=None,
-                            shapefile_path=None, state_name="Idaho"):
+def plot_with_state_outline(lons, lats, data_array, title, cmap="viridis", vmin=None, vmax=None):
     """
-    Plot a 2D array with optional overlay of a state outline from a shapefile.
+    Plot a 2D array using Cartopy with U.S. state outlines and geographic features, including rivers and lakes.
     
     Parameters:
+        lons, lats: 2d arrays of longitude and latitude.
         data_array (2D np.ndarray or xarray.DataArray): The gridded data to plot.
         title (str): Title for the plot.
-        cmap (str): Colormap to use.
+        cmap (str): Colormap to use (default is viridis).
         vmin, vmax (float): Color limits.
-        shapefile_path (str): Path to the shapefile (.shp).
-        state_name (str): Name of the state to overlay (must match shapefile 'NAME' column).
     """
-    plt.figure(figsize=(10, 6))
-    im = plt.pcolormesh(lons, lats, data_array, cmap=cmap, shading="auto", vmin=vmin, vmax=vmax)
-    plt.colorbar(im, label=title)
-    plt.title(title)
-    plt.xlabel("Longitude (°W)")           
-    plt.ylabel("Latitude (°N)")
+    fig = plt.figure(figsize=(10, 6))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    
+    # === PLOT DATA ===
+    im = ax.pcolormesh(
+        lons, lats, data_array, 
+        cmap=cmap, 
+        vmin=vmin, 
+        vmax=vmax, 
+        shading="auto", 
+        transform=ccrs.PlateCarree()
+        )
+    cbar = plt.colorbar(im, ax=ax, orientation="vertical", pad=0.2)
+    cbar.set_label(title)
 
-    if shapefile_path is not None:
-        try:
-            gdf = gpd.read_file(shapefile_path)
-            state_geom = gdf[gdf['NAME'] == state_name]
-            state_geom.boundary.plot(ax=plt.gca(), edgecolor='black', linewidth=1)
-        except Exception as e:
-            print(f"Failed to load or overlay shapefile: {e}")
+    # === ADD GEOGRAPHIC DATA ===
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linestyle=':', linewidth=1)
+    ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='black', linewidth=1)
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1)
+    ax.add_feature(cfeature.RIVERS.with_scale('10m'), edgecolor='blue', linewidth=1)
+    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='lightblue', edgecolor='blue', linewidth=1)
+
+    # === AXES SETTINGS ===
+    ax.set_extent([np.min(lons), np.max(lons), np.min(lats), np.max(lats)])
+    ax.set_title(title)
+    ax.set_xlabel("Longitude (°W)")           
+    ax.set_ylabel("Latitude (°N)")
 
     plt.tight_layout()
     plt.show()
