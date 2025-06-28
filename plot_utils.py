@@ -1,14 +1,35 @@
+import os
+import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
+# === HELPER TO LOAD WRF VARIABLE ===
+def load_wrf_var(var_name, base_dir, year, month):
+    fn = f"{var_name}_{year}-{month}.nc"
+    path = os.path.join(base_dir, fn)
+    try:
+        ds = xr.open_dataset(path)
+        print(f"Loaded {fn}")
+        return ds
+    except FileNotFoundError:
+        print(f"File not found: {fn}")
+        return None
+
+# === ACCUMULATION WITH ROLLOVER FIX ===
+def fix_accum_reset(accum, threshold=100.0):
+    d = accum.diff(dim='Time')
+    d = xr.where(d < 0, d + threshold, d)
+    return d.sum(dim='Time')
+
+# === HELPER TO PLOT DATA WITH GEOGRAPHIC FEATURES ===
 def plot_cartopy(lons, lats, data, title,
                  cmap="viridis", vmin=None, vmax=None, alpha=0.6):
     fig = plt.figure(figsize=(10,6))
     ax  = plt.axes(projection=ccrs.PlateCarree())
 
-    # 1) plot your gridded data on that GeoAxes
+    # === PLOT GRIDDED DATA ON GEOAXES ====
     mesh = ax.pcolormesh(
         lons, lats, data,
         transform=ccrs.PlateCarree(),
@@ -19,7 +40,7 @@ def plot_cartopy(lons, lats, data, title,
     cbar = fig.colorbar(mesh, ax=ax, orientation="vertical", pad=0.02)
     cbar.set_label(title)
 
-    # 2) add Natural Earth features
+    # === ADD GEOGRPAHIC FEATURES ====
     feat_kw = dict(zorder=2, linewidth=0.8)
     ax.add_feature(cfeature.COASTLINE.with_scale("110m"), **feat_kw)
     ax.add_feature(cfeature.BORDERS.with_scale("110m"),
@@ -31,11 +52,11 @@ def plot_cartopy(lons, lats, data, title,
     ax.add_feature(cfeature.LAKES.with_scale("110m"),
                    facecolor="lightblue", edgecolor="blue", **feat_kw)
 
-    # 3) put a thin black frame back around the GeoAxes
+    # === ADD BLACK FRAME AROUND GEOAXES ===
     ax.patch.set_edgecolor("black")
     ax.patch.set_linewidth(1)
 
-    # 4) optionally draw gridlines with labels
+    # === ADD GRIDLINES AND LABELS ===
     gl = ax.gridlines(
         draw_labels=True,
         linewidth=0.5, color="gray", alpha=0.5, linestyle="--"
@@ -43,7 +64,7 @@ def plot_cartopy(lons, lats, data, title,
     gl.top_labels = False
     gl.right_labels = False
 
-    # 5) zoom to your data domain & finish labeling
+    # === ZOOM TO DOMAIN AND LABEL ===
     ax.set_extent([lons.min(), lons.max(), lats.min(), lats.max()],
                   crs=ccrs.PlateCarree())
     ax.set_title(title)
