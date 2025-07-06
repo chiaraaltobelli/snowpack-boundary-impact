@@ -1,6 +1,7 @@
 import os
 import xarray as xr
 import numpy as np
+import time
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -18,10 +19,25 @@ def load_wrf_var(var_name, base_dir, year, month):
         return None
 
 # === ACCUMULATION WITH ROLLOVER FIX ===
+# def fix_accum_reset(accum, threshold=100.0):
+#     d = accum.diff(dim='Time')
+#     d = xr.where(d < 0, d + threshold, d)
+#     return d.sum(dim='Time')
+
 def fix_accum_reset(accum, threshold=100.0):
-    d = accum.diff(dim='Time')
-    d = xr.where(d < 0, d + threshold, d)
-    return d.sum(dim='Time')
+    t0 = time.time()
+    d = accum.diff(dim="Time")
+    print(f"- diff took {time.time()-t0:.1f}s")
+
+    t1 = time.time()
+    d2 = xr.where(d < 0, d + threshold, d)
+    print(f"- where took {time.time()-t1:.1f}s")
+
+    t2 = time.time()
+    out = d2.sum(dim="Time")
+    print(f"- sum took {time.time()-t2:.1f}s")
+
+    return out    
 
 # === HELPER TO PLOT DATA WITH GEOGRAPHIC FEATURES ===
 #TODO make geographic features optional
