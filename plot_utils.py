@@ -2,6 +2,7 @@ import os
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
@@ -177,7 +178,11 @@ def plot_hexbin(x, y,
                 xlabel: str = "X",
                 ylabel: str = "Y",
                 title: str = "",
-                overlay_one_one: bool = False):
+                overlay_one_one: bool = False,
+                log_counts: bool = False,
+                trim_zeros_ones: bool = True,
+                trim_pct: float | None = 99.5
+                ):
     """
     Create a hexbin comparison plot.
 
@@ -190,20 +195,60 @@ def plot_hexbin(x, y,
         extent: (xmin,xmax,ymin,ymax) limits.
         xlabel, ylabel, title: axis labels and title.
         overlay_one_one: if True, draw a 1:1 dashed line.
+        log_counts: use LogNorm (or bins=log if counting).
+        trim_zeros_ones: drop exact 0 and 1 values.
+        trim_pct: cap colorbar vmax to this percentile of counts.
     """
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    # drop NaN/inf
+    good = np.isfinite(x) & np.isfinite(y)
+    x, y = x[good], y[good]
+
+    # Remove exact edge values that dominate plots
+    if trim_zeros_ones:
+        edge = np.isclose(x, 0) | np.isclose(x, 1) | np.isclose(y, 0) | np.isclose(y, 1)
+        x, y = x[~edge], y[~edge]
+
     fig, ax = plt.subplots(figsize=(8, 6))
-    hb = ax.hexbin(
-        x, y,
-        C=None if reduce_C_function is None else None,
-        gridsize=gridsize,
-        cmap=cmap,
-        reduce_C_function=reduce_C_function,
-        mincnt=mincnt,
-        extent=extent,
-        edgecolors="none"
-    )
+    
+    # Choose log behavior
+    if log_counts and reduce_C_function is None:
+        # Counting only -> built in log binning
+        hb = ax.hexbin(
+            x, y,
+            gridsize=gridsize,
+            cmap=cmap,
+            bins='log',
+            mincnt=mincnt,
+            extent=extent,
+            edgecolors="none"
+        )
+    else:
+        norm = LogNorm(vmin=max(mincnt, 1)) if log_counts else None
+        hb = ax.hexbin(
+            x, y,
+            gridsize=gridsize,
+            cmap=cmap,
+            reduce_C_function=reduce_C_function,
+            mincnt=mincnt,
+            extent=extent,
+            edgecolors="none",
+            norm=norm
+        )        
+
+    # Optionally cap the color limit to improve contrast
+    if trim_pct is not None:
+        arr = hb.get_array()
+        if np.ma.isMaskedArray(arr):
+            arr = arr.compressed()          # or: arr = np.ma.filled(arr, np.nan)
+        vmax = np.percentile(arr, trim_pct)  # or np.nanpercentile if you filled with NaN
+        hb.set_clim(vmax=vmax)
+
     cb = fig.colorbar(hb, ax=ax)
     cb.set_label("Count" if reduce_C_function is None else "Aggregated value")
+
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -215,3 +260,4 @@ def plot_hexbin(x, y,
 
     plt.tight_layout()
     plt.show()
+    return fig, ax, hb
