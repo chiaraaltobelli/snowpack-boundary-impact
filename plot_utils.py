@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Callable, Tuple
+from typing import Callable
 
 import numpy as np
 import xarray as xr
@@ -28,38 +28,13 @@ import cartopy.feature as cfeature
 
 @lru_cache(maxsize=None)
 def _open_wrf(var_name: str, current_plot_file: str, year: str, month: str) -> xr.Dataset:
-    """Open a monthly WRF NetCDF once and cache it.
-
-    Parameters
-    ----------
-    var_name : str
-        Variable root name (e.g., "RAINNC", "T2").
-    current_plot_file : str
-        Directory containing the NetCDF files.
-    year, month : str
-        Date strings (e.g., "2000", "03").
-
-    Returns
-    -------
-    xarray.Dataset
-        Opened dataset with Dask chunks.
-    """
+    """Open a monthly WRF NetCDF once and cache it."""
     filename = f"{var_name}_{year}-{month}.nc"
     path = os.path.join(current_plot_file, filename)
     return xr.open_dataset(path, chunks={"Time": 28, "level": 39})
 
 def load_wrf_var(var_name: str, current_plot_file: str, year: str, month: str) -> xr.Dataset | None:
-    """Cached loader with friendly printout and FileNotFound handling.
-
-    Parameters
-    ----------
-    var_name, current_plot_file, year, month : see `_open_wrf`.
-
-    Returns
-    -------
-    xarray.Dataset or None
-        Dataset if present, else None.
-    """
+    """Cached loader with friendly printout and FileNotFound handling."""
     try:
         ds = _open_wrf(var_name, current_plot_file, year, month)
         print(f"Loaded {var_name}_{year}-{month}.nc (cached)")
@@ -73,46 +48,41 @@ def load_wrf_var(var_name: str, current_plot_file: str, year: str, month: str) -
 # -----------------------------------------------------------------------------
 
 def _hourly_precip(ds_cnt: xr.Dataset, ds_rain: xr.Dataset, min_precip_hr: float) -> xr.DataArray:
-    """Hourly precipitation (mm), masked below a threshold.
-
-    Parameters
-    ----------
-    ds_cnt, ds_rain : xarray.Dataset
-        Counter (I_RAINNC) and rain accumulator datasets.
-    min_precip_hr : float
-        Hourly precipitation mask (mm/hr). Values below become 0.
-
-    Returns
-    -------
-    xarray.DataArray
-        Hourly precipitation array (Time, south_north, west_east).
-    """
+    """Hourly precipitation (mm), masked below a threshold."""
     rain2d = ds_cnt["I_RAINNC"] * 100 + ds_rain["RAINNC"]
     raw = rain2d.diff("Time", label="upper").fillna(0)
     zero = xr.zeros_like(raw.isel(Time=0))
     precip_hr = xr.concat([zero, raw], dim="Time").transpose("Time", "south_north", "west_east")
     return precip_hr.where(precip_hr >= min_precip_hr, 0.0)
 
-def _mask_and_pack(precip_sum: xr.DataArray,
-                   snow: xr.DataArray,
-                   liquid: xr.DataArray,
-                   frac: xr.DataArray,
-                   min_prec: float):
-    """Apply mask (low precip or invalid) and return the 4 fields.
+def mask_and_pack(precip_sum: xr.DataArray,
+                  snow: xr.DataArray,
+                  liquid: xr.DataArray,
+                  frac: xr.DataArray,
+                  min_total_precip: float | None = None,
+                  extra_mask: xr.DataArray | np.ndarray | None = None) -> tuple[xr.DataArray, ...]:
+    """
+    Apply a combined mask and return (precip_sum, snow, liquid, frac).
 
     Parameters
     ----------
     precip_sum, snow, liquid, frac : xarray.DataArray
         Monthly fields.
-    min_prec : float
-        Minimum monthly (or summed) precipitation to keep.
+    min_total_precip : float or None
+        If given, mask cells where precip_sum < this value (mm).
+    extra_mask : bool DataArray/ndarray or None
+        Additional mask (True == mask out) to OR with the default mask.
 
     Returns
     -------
-    tuple of DataArray
-        (precip_sum, snow, liquid, frac) with mask applied.
+    tuple[xarray.DataArray, ...]
+        Masked (precip_sum, snow, liquid, frac).
     """
-    mask = (precip_sum < min_prec) | (~np.isfinite(frac))
+    mask = ~np.isfinite(frac)
+    if min_total_precip is not None:
+        mask |= (precip_sum < min_total_precip)
+    if extra_mask is not None:
+        mask |= extra_mask
     return (precip_sum.where(~mask),
             snow.where(~mask),
             liquid.where(~mask),
@@ -125,7 +95,7 @@ def _mask_and_pack(precip_sum: xr.DataArray,
 def compute_microphysics_snow_frac(current_plot_file: str,
                                    year: str,
                                    month: str,
-                                   min_precip: float = 1.0,
+                                   min_precip_month: float = 1.0,
                                    epsilon: float = 1e-6):
     """Monthly totals using native WRF microphysics accumulators.
 
@@ -135,20 +105,7 @@ def compute_microphysics_snow_frac(current_plot_file: str,
     2. Correct rollover (rain2d = I_RAINNC*100 + RAINNC).
     3. Diff & sum over Time to get monthly totals.
     4. Compute liquid = precip - (snow+hail+graupel), and frac = snow/(precip+ε).
-    5. Mask where precip < min_precip or frac non-finite.
-
-    Parameters
-    ----------
-    current_plot_file, year, month : str
-        File location and date selectors.
-    min_precip : float
-        Monthly mask threshold (mm).
-    epsilon : float
-        Small number to avoid division by zero.
-
-    Returns
-    -------
-    precip, snow, liquid, frac : xarray.DataArray
+    5. Mask where precip < min_precip_month or frac non-finite.
     """
     ds_rain  = load_wrf_var("RAINNC",    current_plot_file, year, month)
     ds_snow  = load_wrf_var("SNOWNC",    current_plot_file, year, month)
@@ -165,7 +122,7 @@ def compute_microphysics_snow_frac(current_plot_file: str,
     liquid = precip - (snow + hail + graup)
     frac   = snow / (precip + epsilon)
 
-    return _mask_and_pack(precip, snow, liquid, frac, min_precip)
+    return mask_and_pack(precip, snow, liquid, frac, min_total_precip=min_precip_month)
 
 # -----------------------------------------------------------------------------
 # Phase functions (linear / sigmoid)
@@ -174,10 +131,7 @@ def compute_microphysics_snow_frac(current_plot_file: str,
 def snow_frac_linear(Tc: xr.DataArray | np.ndarray,
                      T_snow: float,
                      T_rain: float) -> xr.DataArray | np.ndarray:
-    """Piecewise-linear phase fraction.
-
-    F=1 for T<=T_snow, F=0 for T>=T_rain, linear in between.
-    """
+    """Piecewise-linear phase fraction. F=1 for T<=T_snow, F=0 for T>=T_rain."""
     span = T_rain - T_snow
     return xr.where(Tc <= T_snow, 1.0,
            xr.where(Tc >= T_rain, 0.0,
@@ -186,23 +140,8 @@ def snow_frac_linear(Tc: xr.DataArray | np.ndarray,
 def _solve_sigmoid_params(T_snow: float,
                           T_rain: float,
                           F_snow: float = 0.95,
-                          F_rain: float = 0.05) -> Tuple[float, float]:
-    """
-    Compute (b, c) for F(T)=0.5*[1 - tanh(b*(T - c))] so that:
-        F(T_snow) ≈ F_snow and F(T_rain) ≈ F_rain.
-
-    Parameters
-    ----------
-    T_snow, T_rain : float
-        Cold / warm anchor temps (°C). Must have T_rain > T_snow.
-    F_snow, F_rain : float
-        Target fractions at those temps (0 < F < 1).
-
-    Returns
-    -------
-    b : float  - steepness
-    c : float  - midpoint temperature (F=0.5)
-    """
+                          F_rain: float = 0.05) -> tuple[float, float]:
+    """Parameters (b, c) for F(T)=0.5*[1 - tanh(b*(T - c))] matching anchors."""
     if T_rain <= T_snow:
         raise ValueError("T_rain must be > T_snow")
     if not (0 < F_snow < 1 and 0 < F_rain < 1):
@@ -220,10 +159,7 @@ def snow_frac_sigmoid(Tc: xr.DataArray | np.ndarray,
                       T_rain: float = 5.0,
                       F_snow: float = 0.95,
                       F_rain: float = 0.05) -> xr.DataArray | np.ndarray:
-    """Sigmoidal (tanh) snow fraction in [0,1].
-
-    F(T) = 0.5 * [1 - tanh(b*(T - c))], with (b,c) solved from anchors.
-    """
+    """Sigmoidal (tanh) snow fraction in [0,1]."""
     b, c = _solve_sigmoid_params(T_snow, T_rain, F_snow, F_rain)
     return np.clip(0.5 * (1 - np.tanh(b * (Tc - c))), 0.0, 1.0)
 
@@ -236,25 +172,10 @@ def _compute_phase_snow_frac(current_plot_file: str,
                              month: str,
                              min_precip_hr: float,
                              phase_func: Callable[[xr.DataArray], xr.DataArray],
-                             epsilon: float = 1e-6):
-    """Core routine: build monthly fields using a provided phase function.
-
-    Parameters
-    ----------
-    current_plot_file, year, month : str
-        File location and date selectors.
-    min_precip_hr : float
-        Hourly precip mask threshold (mm/hr).
-    phase_func : callable
-        Function mapping temperature (°C) -> snow fraction [0,1].
-    epsilon : float
-        Small number to avoid division by zero.
-
-    Returns
-    -------
-    precip_sum, snow, liquid, frac : xarray.DataArray
-    """
-    ds_t2   = load_wrf_var("T2",      current_plot_file, year, month)
+                             epsilon: float = 1e-6,
+                             min_precip_month: float | None = None):
+    """Build monthly fields using a provided phase function."""
+    ds_t2   = load_wrf_var("T2",       current_plot_file, year, month)
     ds_cnt  = load_wrf_var("I_RAINNC", current_plot_file, year, month)
     ds_rain = load_wrf_var("RAINNC",   current_plot_file, year, month)
 
@@ -263,12 +184,14 @@ def _compute_phase_snow_frac(current_plot_file: str,
 
     frac_hr = phase_func(T_c).clip(min=0.0, max=1.0)
 
-    snow   = (precip_hr * frac_hr).sum("Time")
-    liquid = (precip_hr * (1 - frac_hr)).sum("Time")
-    precip_sum = precip_hr.sum("Time")
-    frac_map   = snow / (precip_sum + epsilon)
+    snow        = (precip_hr * frac_hr).sum("Time")
+    liquid      = (precip_hr * (1 - frac_hr)).sum("Time")
+    precip_sum  = precip_hr.sum("Time")
+    frac_map    = snow / (precip_sum + epsilon)
 
-    return _mask_and_pack(precip_sum, snow, liquid, frac_map, min_precip_hr)
+    month_thresh = min_precip_hr if min_precip_month is None else min_precip_month
+    return mask_and_pack(precip_sum, snow, liquid, frac_map,
+                         min_total_precip=month_thresh)
 
 def compute_linear_snow_frac(current_plot_file: str,
                              year: str,
@@ -276,12 +199,13 @@ def compute_linear_snow_frac(current_plot_file: str,
                              min_precip_hr: float = 0.1,
                              TSNOW_THRESHOLD: float = 0.0,
                              TRAIN_THRESHOLD: float = 5.0,
-                             epsilon: float = 1e-6):
+                             epsilon: float = 1e-6,
+                             min_precip_month: float | None = None):
     """Monthly fields using the piecewise-linear phase function."""
     return _compute_phase_snow_frac(
         current_plot_file, year, month, min_precip_hr,
         phase_func=lambda T: snow_frac_linear(T, TSNOW_THRESHOLD, TRAIN_THRESHOLD),
-        epsilon=epsilon
+        epsilon=epsilon, min_precip_month=min_precip_month
     )
 
 def compute_sigmoidal_snow_frac(current_plot_file: str,
@@ -292,12 +216,13 @@ def compute_sigmoidal_snow_frac(current_plot_file: str,
                                 T_rain: float = 5.0,
                                 F_snow: float = 0.95,
                                 F_rain: float = 0.05,
-                                epsilon: float = 1e-6):
+                                epsilon: float = 1e-6,
+                                min_precip_month: float | None = None):
     """Monthly fields using the tanh-based sigmoidal phase function."""
     return _compute_phase_snow_frac(
         current_plot_file, year, month, min_precip_hr,
         phase_func=lambda T: snow_frac_sigmoid(T, T_snow, T_rain, F_snow, F_rain),
-        epsilon=epsilon
+        epsilon=epsilon, min_precip_month=min_precip_month
     )
 
 # -----------------------------------------------------------------------------
@@ -325,14 +250,25 @@ def plot_cartopy(lons, lats, data, title,
     plt.show()
 
 def cartomap(ax, lons, lats, data, title,
-             cmap="viridis", vmin=None, vmax=None, alpha=0.6):
-    """Draw a Cartopy pcolormesh on an existing axes (no new figure)."""
+             cmap="viridis", vmin=None, vmax=None, alpha=0.6,
+             add_colorbar=True, cbar_label=None, cbar_kwargs=None):
+    """
+    Draw a Cartopy pcolormesh on an existing axes.
+
+    Returns
+    -------
+    mesh : QuadMesh
+    cb   : Colorbar or None
+    """
     mesh = ax.pcolormesh(lons, lats, data,
                          transform=ccrs.PlateCarree(),
                          cmap=cmap, vmin=vmin, vmax=vmax,
                          shading="auto", alpha=alpha, zorder=1)
-    cb = plt.colorbar(mesh, ax=ax, orientation="vertical", pad=0.02)
-    cb.set_label(title)
+    cb = None
+    if add_colorbar:
+        ck = {} if cbar_kwargs is None else dict(cbar_kwargs)
+        cb = plt.colorbar(mesh, ax=ax, orientation="vertical", pad=0.02, **ck)
+        cb.set_label(cbar_label or title)
 
     feat_kw = dict(zorder=2, linewidth=0.6)
     ax.add_feature(cfeature.COASTLINE.with_scale("110m"), **feat_kw)
@@ -340,6 +276,7 @@ def cartomap(ax, lons, lats, data, title,
     ax.add_feature(cfeature.STATES.with_scale("110m"), edgecolor="black", linewidth=0.5, zorder=2)
 
     ax.set_title(title)
+    return mesh, cb
 
 def plot_hexbin(x, y,
                 gridsize: int = 50,
@@ -360,8 +297,7 @@ def plot_hexbin(x, y,
     -------
     fig, ax, hb : matplotlib Figure, Axes, PolyCollection
     """
-    x = np.asarray(x)
-    y = np.asarray(y)
+    x = np.asarray(x); y = np.asarray(y)
 
     good = np.isfinite(x) & np.isfinite(y)
     x, y = x[good], y[good]
@@ -406,10 +342,11 @@ def plot_hexbin(x, y,
     return fig, ax, hb
 
 __all__ = [
-    'load_wrf_var',
-    'compute_microphysics_snow_frac',
-    'compute_linear_snow_frac',
-    'compute_sigmoidal_snow_frac',
-    'snow_frac_sigmoid', 'snow_frac_linear',
-    'plot_cartopy', 'cartomap', 'plot_hexbin'
+    "load_wrf_var",
+    "compute_microphysics_snow_frac",
+    "compute_linear_snow_frac",
+    "compute_sigmoidal_snow_frac",
+    "snow_frac_sigmoid", "snow_frac_linear",
+    "plot_cartopy", "cartomap", "plot_hexbin",
+    "mask_and_pack",
 ]
