@@ -341,6 +341,26 @@ def plot_hexbin(x, y,
     plt.show()
     return fig, ax, hb
 
+def r_squared(x, y):
+    """Return R² = Pearson correlation coefficient squared."""
+    x, y = np.asarray(x), np.asarray(y)
+    mask = np.isfinite(x) & np.isfinite(y)
+    r = np.corrcoef(x[mask], y[mask])[0, 1]
+    return r**2
+
+def kling_gupta_efficiency(sim, obs):
+    """Calculate Kling-Gupta Efficiency between simulated and observed data."""
+    sim, obs = np.asarray(sim), np.asarray(obs)
+    mask = np.isfinite(sim) & np.isfinite(obs)
+    sim, obs = sim[mask], obs[mask]
+    
+    r = np.corrcoef(sim, obs)[0, 1]
+    alpha = np.std(sim) / np.std(obs)
+    beta = np.mean(sim) / np.mean(obs)
+
+    return 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+
+
 __all__ = [
     "load_wrf_var",
     "compute_microphysics_snow_frac",
@@ -348,5 +368,5 @@ __all__ = [
     "compute_sigmoidal_snow_frac",
     "snow_frac_sigmoid", "snow_frac_linear",
     "plot_cartopy", "cartomap", "plot_hexbin",
-    "mask_and_pack",
+    "mask_and_pack", "r_squared", "kling_gupta_efficiency"
 ]
