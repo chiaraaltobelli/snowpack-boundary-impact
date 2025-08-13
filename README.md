@@ -9,6 +9,7 @@ Folder contents:
 1. **`iterative-03-2000.ipynb`**
 2. **`compare-03-2000.ipynb`**
 3. **`plot_utils.py`**
+4. **`app.py`** ***FUTURE***
 
 ---
 
@@ -86,7 +87,7 @@ HEX_GRIDSIZE, HEX_TRIM_PCT = 50, 99.0
 
 **Usage:**
 
-1. Install dependencies: `numpy`, `xarray`, `matplotlib`, `cartopy`, etc.
+1. Install dependencies: `numpy`, `xarray`, `matplotlib`, `cartopy`, `streamlit` etc.
 2. Open in Jupyter and run all cells.
 3. Add new entries to `THRESHOLD_SOURCES` to include other temperature definitions.
 
@@ -178,6 +179,31 @@ HEX_TRIM_PCT = 99.0
 
 * Imported by both notebooks to handle data loading, masking, computation, and plotting.
 
+---
+## 4. `app.py` *(FUTURE — Streamlit GUI)*
+
+**Purpose:**
+
+Will provide a web-based interface (via Streamlit) to run the precipitation-phase analysis without editing notebook code.
+
+Planned features:
+- Dataset directory (`D02_DIR`) selection
+- Year & month controls
+- Temperature thresholds (`T_snow`, `T_rain`)
+- Target snow/liquid fractions (`F_snow`, `F_rain`)
+- Scheme selection (microphysics, linear, sigmoidal)
+- Plot type selection
+- Inline rendering of plots in browser
+
+**Planned Usage:**
+
+1. Activate the conda environment:
+   ```bash
+   conda activate snowpack-model
+2. Run:
+   ```bash
+   streamlit run app.py --server.port <PORT> --server.address 0.0.0.0
+3. Use VS Code’s PORTS panel to forward <PORT> and open in your browser.
 ---
 
 # Prerequisites
