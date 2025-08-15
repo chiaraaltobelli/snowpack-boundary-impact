@@ -283,7 +283,7 @@ if run:
             [np.asarray(snow_micro), np.asarray(snow_lin), np.asarray(snow_sig)],
             ['(a) Microphysics', '(b) Linear', '(c) Sigmoidal'],
             cmap=CMAP_MAP, vmin=SNOW_MIN, vmax=SNOW_MAX, unit_label="Snow Total (mm)",
-            title=f"Snow Totals — {range_label}{thresh_label}, fontsize=18, y=1.05"
+            title=f"Snow Totals — {range_label}{thresh_label}"
         )
         st.pyplot(fig)
 
@@ -294,7 +294,7 @@ if run:
             [np.asarray(frac_micro), np.asarray(frac_lin), np.asarray(frac_sig)],
             ['(a) Microphysics', '(b) Linear', '(c) Sigmoidal'],
             cmap=CMAP_FRAC, vmin=FRAC_MIN, vmax=FRAC_MAX, unit_label="Snow Fraction",
-            title=f"Snow Fraction — {range_label}{thresh_label}, fontsize=18, y=1.05"
+            title=f"Snow Fraction — {range_label}{thresh_label}"
         )
         st.pyplot(fig)
 
