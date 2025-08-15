@@ -16,4 +16,4 @@ dependencies:
   - scipy
   - tqdm        # progress bars — useful for batch processing
   - ipykernel   # enables using this env as a Jupyter kernel
-
+  - streamlit   # for the GUI
