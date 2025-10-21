@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+*.egg-info/
+*.log
+
+# Test caches
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+*.env
+*.venv
+
+# Data or binary artifacts
+*.nc
+*.h5
+*.csv
+*.parquet
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code settings
+.vscode/
