@@ -1,19 +1,12 @@
 import math
 
-# Contains constants and thermodynamic formulas
+# Contains constants and thermodynamic formulas necessary for implementing the Harder & Pomeroy method (2013)
 
 #CONSTANTS
 R = 8.31441 # universal gas constant (J mol^-1 K^-1)
 M_W = 0.01801528 # molecular weight of water (kg mol^-1)
 
 #FORMULAS
-
-# Saturation vapor pressure
-
-# Ambient vapor pressure
-
-
-
 # Diffusivity of water vapor in air
 def calc_diffusivity(t_a: float) -> float:
     """Calculate the diffusivity of water vapor in air.
@@ -43,10 +36,11 @@ def calc_ambient_vapor_pressure(t_a:float, r_h:float) -> float:
     Note:
         Uses a Magnus-type relation over water, then scales by RH.
     """
-    e = (r_h/100) * 0.611 * math.exp((17.3 * t_a) / (237.3 + t_a)) 
-    e = e * 1000 # convert from kPa to Pa
-    return e
+    e_ta_kPa = (r_h/100) * 0.611 * math.exp((17.3 * t_a) / (237.3 + t_a)) 
+    e_ta = e_ta_kPa * 1000 # convert from kPa to Pa
+    return e_ta
 
+# Saturation vapor pressure
 def get_saturation_vapor_pressure(t_a:float) -> float:
     """Gets the saturation vapor pressure based on the air temperature.
         If t_a <= 0 degrees Celsius, evaluate over ice.
@@ -59,10 +53,10 @@ def get_saturation_vapor_pressure(t_a:float) -> float:
         Harder & Pomeroy (2013)
     """
     if (t_a <= 0):
-        rho_sat = calc_saturation_vapor_pressure_over_ice(t_a)
+        e_sat = calc_saturation_vapor_pressure_over_ice(t_a)
     else:
-        rho_sat = calc_saturation_vapor_pressure_over_water(t_a)
-    return rho_sat
+        e_sat = calc_saturation_vapor_pressure_over_water(t_a)
+    return e_sat
 
 def calc_saturation_vapor_pressure_over_ice(t_a:float) -> float:
     """Calculate saturation vapor pressure over ice.
@@ -75,9 +69,9 @@ def calc_saturation_vapor_pressure_over_ice(t_a:float) -> float:
     Note:
         Uses a Magnus-type relation over ice.
     """
-    e = 0.611 * math.exp((22.46 * t_a) / (272.62 + t_a))
-    e = e * 1000 # convert from kPa to Pa
-    return e
+    e_sat_kPa = 0.611 * math.exp((22.46 * t_a) / (272.62 + t_a))
+    e_sat = e_sat_kPa * 1000 # convert from kPa to Pa
+    return e_sat
 
 def calc_saturation_vapor_pressure_over_water(t_a:float) -> float:
     """Calculate saturation vapor pressure over water.
@@ -90,16 +84,16 @@ def calc_saturation_vapor_pressure_over_water(t_a:float) -> float:
     Note:
         Uses a Magnus-type relation over water.
     """
-    e = 0.611 * math.exp((17.3 * t_a) / (237.3 + t_a))
-    e = e * 1000 # convert from kPa to Pa
-    return e
+    e_sat_kPa = 0.611 * math.exp((17.3 * t_a) / (237.3 + t_a))
+    e_sat = e_sat_kPa * 1000 # convert from kPa to Pa
+    return e_sat
 
-# Vapor density
-def calc_water_vapor_density(t_a: float, e: float) -> float:
+# Water vapor density
+def calc_water_vapor_density(t_a: float, r_h:float) -> float:
     """Calculate water vapor density.
     Args:
         t_a (float): Air temperature in degrees Celsius.
-        e (float): Actual vapor pressure in Pa.
+        r_h (float): Relative humidity as a percentage.
     Returns:
         float: Density of water vapor (kg m^-3).
     Reference:
@@ -107,10 +101,12 @@ def calc_water_vapor_density(t_a: float, e: float) -> float:
     Note:
         Air temperature is internally converted from °C to K before applying Eq. (A.8).
     """
+    e_ta = calc_ambient_vapor_pressure(t_a, r_h) # Get the ambient vapor pressure in Pa
     t_k = t_a + 273.15 # Convert C to K for absolute temperature
-    rho_ta = (M_W * e) / (R * t_k) # Ideal gas law for water vapor
+    rho_ta = (M_W * e_ta) / (R * t_k) # Ideal gas law for water vapor
     return rho_ta
 
+# Saturation vapor density
 def calc_saturation_vapor_density(t_a: float) -> float:
     """Calculate saturation vapor density.
     Args:
@@ -182,5 +178,3 @@ def calc_latent_heat_vaporization(t_a:float) -> float:
     """
     l = 1000 * (2501 - (2.361 * t_a)) # latent heat of vaporization (T >= 0 C)
     return l
-
-# Dewpoint
