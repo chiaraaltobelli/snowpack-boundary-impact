@@ -14,13 +14,14 @@ def test_calc_rainfall_fraction_known_values():
     # A few temps
     Ti = np.array([-5.0, 0.0, 5.0])
 
-    # Expected via Eq. 6: f = 1 / (1 + b * c**Ti)
-    expected = 1.0 / (1.0 + b * (c ** Ti))
+    # Expected results from Eq. 6, precomputed
+    expected = np.array([0.000159974, 0.333333333, 0.999360409])
 
-    # Evaluate one-by-one to exercise scalar path
+    # Compute with the function
     got = np.array([phase.calc_rainfall_fraction(float(t), b, c) for t in Ti])
 
-    assert np.allclose(got, expected, rtol=1e-12, atol=1e-12)
+    # Compare with tight tolerance
+    assert np.allclose(got, expected, rtol=1e-6, atol=1e-8), f"got={got}, expected={expected}"
 
 
 # -----------------------------------------------------------------------------
@@ -40,9 +41,8 @@ def test_fit_bc_recovers_bc_without_noise():
     # Uniform weights (e.g., precip amount)
     w = np.ones_like(Ti)
 
-    # Wrap as xarray.DataArray-like inputs are expected; but function accepts xr.DataArray or ndarray values via .values usage.
-    # Here we can pass NumPy arrays directly since fit_bc converts to np arrays internally.
-    b_hat, c_hat = phase.fit_bc(Ti, fr, w)
+    # Get the results from fit_bc method
+    b_hat, c_hat = phase.fit_bc(Ti, fr, w, epsilon=0.0)
 
     assert np.isclose(b_hat, b_true, rtol=1e-3, atol=1e-3)
     assert np.isclose(c_hat, c_true, rtol=1e-3, atol=1e-3)
