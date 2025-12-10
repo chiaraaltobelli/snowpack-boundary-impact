@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import thermos
+import phase
 
 # -----------------------------------------------------------------------------
 # Data I/O
@@ -125,7 +127,7 @@ def compute_microphysics_snow_frac(current_plot_file: str,
     return mask_and_pack(precip, snow, liquid, frac, min_total_precip=min_precip_month)
 
 # -----------------------------------------------------------------------------
-# Phase functions (linear / sigmoid)
+# Phase functions (linear / sigmoid / Harder)
 # -----------------------------------------------------------------------------
 
 def snow_frac_linear(Tc: xr.DataArray | np.ndarray,
@@ -223,6 +225,93 @@ def compute_sigmoidal_snow_frac(current_plot_file: str,
         current_plot_file, year, month, min_precip_hr,
         phase_func=lambda T: snow_frac_sigmoid(T, T_snow, T_rain, F_snow, F_rain),
         epsilon=epsilon, min_precip_month=min_precip_month
+    )
+
+def compute_harder_snow_frac(current_plot_file: str,
+                             year: str,
+                             month: str,
+                             b: float,
+                             c: float,
+                             min_precip_hr: float = 0.1,
+                             epsilon: float = 1e-6,
+                             min_precip_month: float | None = None):
+    """
+    Monthly fields using the Harder & Pomeroy (2013) T_i–RH method.
+
+    Steps
+    -----
+    1. Load T2 (K), Q2 (kg/kg), PSFC (Pa), RAINNC, I_RAINNC.
+    2. Build hourly precip as in other PPM schemes.
+    3. Convert T2 -> T_a (°C).
+    4. Compute RH (%) from (T_a, Q2, PSFC) via thermos.calc_relative_humidity_from_q2.
+    5. Compute wet-bulb / psychrometric temperature T_i (°C) via phase.calc_t_i.
+    6. Compute rainfall fraction f_rain(T_i) with phase.calc_rainfall_fraction(b, c).
+    7. Snow fraction f_snow = 1 - f_rain.
+    8. Aggregate to monthly snow, liquid, precip, and snow fraction, then mask.
+    """
+    # 1) Load fields
+    ds_t2   = load_wrf_var("T2",       current_plot_file, year, month)
+    ds_q2   = load_wrf_var("Q2",       current_plot_file, year, month)
+    ds_psfc = load_wrf_var("PSFC",     current_plot_file, year, month)
+    ds_cnt  = load_wrf_var("I_RAINNC", current_plot_file, year, month)
+    ds_rain = load_wrf_var("RAINNC",   current_plot_file, year, month)
+
+    # Hourly precip (mm/hr), already thresholded
+    precip_hr = _hourly_precip(ds_cnt, ds_rain, min_precip_hr)
+
+    # 3) Air temperature (°C)
+    T_c = (ds_t2["T2"] - thermos.CELSIUS_TO_KELVIN).transpose("Time", "south_north", "west_east")
+
+    # 4) Relative humidity from (T_c, Q2, PSFC)
+    rh = xr.apply_ufunc(
+        thermos.calc_relative_humidity_from_q2,
+        T_c,
+        ds_q2["Q2"],
+        ds_psfc["PSFC"],
+        input_core_dims=[[], [], []],
+        output_core_dims=[[]],
+        dask="parallelized",
+        vectorize=True,
+        output_dtypes=[float],
+    )
+
+    # 5) Psychrometric / iteration temperature T_i (°C)
+    T_i = xr.apply_ufunc(
+        phase.calc_t_i,
+        T_c,
+        rh,
+        input_core_dims=[[], []],
+        output_core_dims=[[]],
+        dask="parallelized",
+        vectorize=True,
+        output_dtypes=[float],
+    )
+
+    # 6) Rainfall fraction from Harder parameterization
+    f_rain = xr.apply_ufunc(
+        phase.calc_rainfall_fraction,
+        T_i,
+        input_core_dims=[[]],
+        output_core_dims=[[]],
+        dask="parallelized",
+        vectorize=True,
+        kwargs={"b": b, "c": c},
+        output_dtypes=[float],
+    ).clip(0.0, 1.0)
+
+    # 7) Snow fraction
+    f_snow = 1.0 - f_rain
+
+    # 8) Aggregate over time
+    snow       = (precip_hr * f_snow).sum("Time")
+    liquid     = (precip_hr * f_rain).sum("Time")
+    precip_sum = precip_hr.sum("Time")
+    frac_map   = snow / (precip_sum + epsilon)
+
+    month_thresh = min_precip_hr if min_precip_month is None else min_precip_month
+    return mask_and_pack(
+        precip_sum, snow, liquid, frac_map,
+        min_total_precip=month_thresh
     )
 
 # -----------------------------------------------------------------------------
@@ -366,6 +455,7 @@ __all__ = [
     "compute_microphysics_snow_frac",
     "compute_linear_snow_frac",
     "compute_sigmoidal_snow_frac",
+    "compute_harder_snow_frac",
     "snow_frac_sigmoid", "snow_frac_linear",
     "plot_cartopy", "cartomap", "plot_hexbin",
     "mask_and_pack", "r_squared", "kling_gupta_efficiency"

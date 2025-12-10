@@ -4,37 +4,68 @@ from thermos import (
     calc_thermal_conductivity,
     get_latent_heat,
     calc_water_vapor_density,
-    calc_saturation_vapor_density)
+    calc_saturation_vapor_density,
+)
 
-# Psychrometric energy balance
-def calc_t_i(t_a: float, r_h: float, tol: float = 1e-6, max_iterations: int = 1000) -> float:
-    """Iteratively calculate the hydrometeor temperature, starting with an approximation that t_i = t_a.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-        r_h (float): Relative humidity as a percentage.
-    Returns:
-        float: The hydrometeor temperature in degrees Celsius.
-    Reference:
-        Harder & Pomeroy (2013) (A.5)
+SAFE_T_MIN = -80.0
+SAFE_T_MAX = 50.0
+
+def calc_t_i(t_a: float, r_h: float,
+             tol: float = 1e-4,
+             max_iterations: int = 50) -> float:
     """
-    # Get values for calculations
-    t_i = t_a # Use an approximate value for t_i, setting equal to t_a
-    d = calc_diffusivity(t_a) # Get the diffusivity, D
-    lambda_t = calc_thermal_conductivity(t_a) # Get the thermal conductivity
-    rho_ta = calc_water_vapor_density(t_a,r_h) # Get the ambient water vapor density
+    Iteratively calculate the hydrometeor temperature (°C),
+    starting with t_i = t_a.
 
-    # Loop until t_i is less than stated tolerance
+    t_a : air temperature in °C
+    r_h : relative humidity in %
+    """
+    if not np.isfinite(t_a) or not np.isfinite(r_h):
+        # optional: comment this out once you trust it
+        # print(f"[calc_t_i] bad inputs: T_a={t_a}, RH={r_h}")
+        return np.nan
+
+    # Clamp inputs
+    t_a = float(np.clip(t_a, SAFE_T_MIN, SAFE_T_MAX))
+    r_h = float(np.clip(r_h, 0.0, 100.0))
+
+    # Precompute terms that don't depend on t_i
+    t_i = t_a
+    d = calc_diffusivity(t_a)
+    lambda_t = calc_thermal_conductivity(t_a)
+    rho_ta = calc_water_vapor_density(t_a, r_h)
+
+    if not (np.isfinite(d) and np.isfinite(lambda_t) and np.isfinite(rho_ta)):
+        return t_a  # fall back: no adjustment
+
     for _ in range(max_iterations):
-        l = get_latent_heat(t_i) # Get the latent heat (sublimation or vaporization)
-        rho_sat = calc_saturation_vapor_density(t_i) # Get the saturation vapor density
-        t_i_new = t_a + (d / lambda_t) * l * (rho_ta - rho_sat)
+        l = get_latent_heat(t_i)
+        rho_sat = calc_saturation_vapor_density(t_i)
+
+        if not (np.isfinite(l) and np.isfinite(rho_sat)):
+            return t_a
+
+        # CORRECT SIGN: cooling when rho_ta < rho_sat
+        delta = (d / lambda_t) * l * (rho_ta - rho_sat)
+        t_i_raw = t_a + delta
+
+        # Under-relaxation to help convergence
+        t_i_new = 0.5 * t_i + 0.5 * t_i_raw
+        t_i_new = float(np.clip(t_i_new, SAFE_T_MIN, SAFE_T_MAX))
+
         if abs(t_i_new - t_i) < tol:
+            t_i = t_i_new
             break
+
         t_i = t_i_new
     else:
-        print(f"Warning: calc_t_i did not converge after {max_iterations} iterations.")
-    
+        print(
+            f"Warning: calc_t_i did not converge after {max_iterations} iterations. "
+            f"Final t_i={t_i:.2f}, T_a={t_a:.2f}, RH={r_h:.1f}"
+        )
+
     return t_i
+
 
 # Precipitation phase estimation relationship
 def calc_rainfall_fraction(t_i:np.ndarray, b:float, c:float) -> np.ndarray:

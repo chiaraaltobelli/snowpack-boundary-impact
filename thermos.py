@@ -1,180 +1,206 @@
 import math
+import numpy as np
 
-# Contains constants and thermodynamic formulas necessary for implementing the Harder & Pomeroy method (2013)
+# Contains constants and thermodynamic formulas necessary for
+# implementing the Harder & Pomeroy method (2013)
 
-#CONSTANTS
-R = 8.31441 # universal gas constant (J mol^-1 K^-1)
-M_W = 0.01801528 # molecular weight of water (kg mol^-1)
+# CONSTANTS
+R = 8.31441              # universal gas constant (J mol^-1 K^-1)
+M_W = 0.01801528         # molecular weight of water (kg mol^-1)
+EPSILON_Q = 0.622        # ratio of dry air / water vapor gas constants (for mixing ratio to vapor pressure)
+CELSIUS_TO_KELVIN = 273.15  # WRF in Kelvins, formulas based in Celsius
 
-#FORMULAS
+SAFE_T_MIN = -80.0
+SAFE_T_MAX = 50.0
+
+# ---------------------------------------------------------------------
+# INTERNAL HELPERS
+# ---------------------------------------------------------------------
+
+def _clamp_T(t_a: float, tmin: float = SAFE_T_MIN, tmax: float = SAFE_T_MAX) -> float:
+    """Clamp temperature to a physically reasonable range and handle non-finite."""
+    if not np.isfinite(t_a):
+        return np.nan
+    return float(np.clip(t_a, tmin, tmax))
+
+
+def _safe_magnus_exp(t_a: float, a: float, b: float, c: float,
+                     tmin: float, tmax: float) -> float:
+    """
+    Safe evaluation of Magnus-type expression:
+        e_sat_kPa = a * exp(b * t / (c + t))
+
+    with clamping on temperature and exponent.
+    """
+    t = _clamp_T(t_a, tmin=tmin, tmax=tmax)
+
+    denom = c + t
+    if abs(denom) < 1e-3:
+        # Avoid huge exponents from division by ~0
+        denom = 1e-3 if denom >= 0 else -1e-3
+
+    exponent = (b * t) / denom
+    exponent = float(np.clip(exponent, -700.0, 700.0))
+
+    return a * math.exp(exponent)
+
+# ---------------------------------------------------------------------
+# FORMULAS
+# ---------------------------------------------------------------------
+
 # Diffusivity of water vapor in air
 def calc_diffusivity(t_a: float) -> float:
-    """Calculate the diffusivity of water vapor in air.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Diffusivity of water vapor in air (m^2 s^-1).
-    Reference:
-        Harder & Pomeroy (2013) (A.6)
-    Note:
-        Air temperature is internally converted from °C to K before applying Eq. (A.6).
     """
-    t_a_K = t_a + 273.15 # Convert C to K for absolute temperature
-    d = 2.06e-5 * (t_a_K / 273.15) ** 1.75
+    Diffusivity of water vapor in air (m^2 s^-1).
+    Harder & Pomeroy (2013) (A.6)
+    """
+    t_a_K = _clamp_T(t_a) + CELSIUS_TO_KELVIN
+    d = 2.06e-5 * (t_a_K / CELSIUS_TO_KELVIN) ** 1.75
     return d
 
+
 # Ambient vapor pressure
-def calc_ambient_vapor_pressure(t_a:float, r_h:float) -> float:
-    """Calculate ambient (actual) vapor pressure over water.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-        r_h (float): Relative humidity as a percentage.
-    Returns:
-        float: Ambient vapor pressure over water in Pa.
-    Reference:
-        Harder & Pomeroy (2013) (A.7)
-    Note:
-        Uses a Magnus-type relation over water, then scales by RH.
+def calc_ambient_vapor_pressure(t_a: float, r_h: float) -> float:
     """
-    e_ta_kPa = (r_h/100) * 0.611 * math.exp((17.3 * t_a) / (237.3 + t_a)) 
-    e_ta = e_ta_kPa * 1000 # convert from kPa to Pa
-    return e_ta
+    Ambient (actual) vapor pressure over water, in Pa.
+    Uses saturation over water and scales by RH.
+    """
+    if not np.isfinite(t_a) or not np.isfinite(r_h):
+        return np.nan
 
-# Saturation vapor pressure
-def get_saturation_vapor_pressure(t_a:float) -> float:
-    """Gets the saturation vapor pressure based on the air temperature.
-        If t_a <= 0 degrees Celsius, evaluate over ice.
-        If t_a > 0 degrees Celsius, evaluate over water.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Saturation vapor pressure in Pa.
-    Reference:
-        Harder & Pomeroy (2013)
+    r_h = float(np.clip(r_h, 0.0, 100.0))
+    e_sat = calc_saturation_vapor_pressure_over_water(t_a)  # Pa
+    return (r_h / 100.0) * e_sat
+
+
+# Vapor pressure from mixing ratio
+def calc_vapor_pressure_from_mixing_ratio(q: float, p: float) -> float:
     """
-    if (t_a <= 0):
-        e_sat = calc_saturation_vapor_pressure_over_ice(t_a)
+    Vapor pressure from water vapor mixing ratio and pressure.
+    e = q * p / (EPSILON_Q + q)
+    """
+    return q * p / (EPSILON_Q + q)
+
+
+# Saturation vapor pressure dispatcher
+def get_saturation_vapor_pressure(t_a: float) -> float:
+    """
+    Saturation vapor pressure in Pa.
+    Ice for t_a <= 0°C, water for t_a > 0°C.
+    """
+    if t_a <= 0.0:
+        return calc_saturation_vapor_pressure_over_ice(t_a)
     else:
-        e_sat = calc_saturation_vapor_pressure_over_water(t_a)
-    return e_sat
+        return calc_saturation_vapor_pressure_over_water(t_a)
 
-def calc_saturation_vapor_pressure_over_ice(t_a:float) -> float:
-    """Calculate saturation vapor pressure over ice.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Saturation vapor pressure over ice in Pa.
-    Reference:
-        Harder & Pomeroy (2013)
-    Note:
-        Uses a Magnus-type relation over ice.
-    """
-    e_sat_kPa = 0.611 * math.exp((22.46 * t_a) / (272.62 + t_a))
-    e_sat = e_sat_kPa * 1000 # convert from kPa to Pa
-    return e_sat
 
-def calc_saturation_vapor_pressure_over_water(t_a:float) -> float:
-    """Calculate saturation vapor pressure over water.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Saturation vapor pressure over water in Pa.
-    Reference:
-        Harder & Pomeroy (2013)
-    Note:
-        Uses a Magnus-type relation over water.
+def calc_saturation_vapor_pressure_over_ice(t_a: float) -> float:
     """
-    e_sat_kPa = 0.611 * math.exp((17.3 * t_a) / (237.3 + t_a))
-    e_sat = e_sat_kPa * 1000 # convert from kPa to Pa
-    return e_sat
+    Saturation vapor pressure over ice (Pa).
+    Harder & Pomeroy (2013), Magnus-type relation.
+    """
+    # a=0.611 kPa, b=22.46, c=272.62
+    e_sat_kPa = _safe_magnus_exp(t_a, a=0.611, b=22.46, c=272.62,
+                                 tmin=-80.0, tmax=0.0)
+    return e_sat_kPa * 1000.0
+
+
+def calc_saturation_vapor_pressure_over_water(t_a: float) -> float:
+    """
+    Saturation vapor pressure over water (Pa).
+    Harder & Pomeroy (2013), Magnus-type relation.
+    """
+    # a=0.611 kPa, b=17.3, c=237.3
+    e_sat_kPa = _safe_magnus_exp(t_a, a=0.611, b=17.3, c=237.3,
+                                 tmin=-40.0, tmax=50.0)
+    return e_sat_kPa * 1000.0
+
+
+# Relative humidity from T, q, p
+def calc_relative_humidity_from_q2(t_a: float, q: float, p: float) -> float:
+    """
+    Relative humidity (%) from air temperature (°C), mixing ratio (kg/kg), and pressure (Pa).
+    """
+    if not (np.isfinite(t_a) and np.isfinite(q) and np.isfinite(p) and p > 0):
+        return np.nan
+
+    e = calc_vapor_pressure_from_mixing_ratio(q, p)
+    e_sat = calc_saturation_vapor_pressure_over_water(t_a)
+
+    if e_sat <= 0.0 or not np.isfinite(e_sat):
+        return np.nan
+
+    rh = 100.0 * e / e_sat
+    return float(np.clip(rh, 0.0, 100.0))
+
 
 # Water vapor density
-def calc_water_vapor_density(t_a: float, r_h:float) -> float:
-    """Calculate water vapor density.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-        r_h (float): Relative humidity as a percentage.
-    Returns:
-        float: Density of water vapor (kg m^-3).
-    Reference:
-        Harder & Pomeroy (2013) (A.8)
-    Note:
-        Air temperature is internally converted from °C to K before applying Eq. (A.8).
+def calc_water_vapor_density(t_a: float, r_h: float) -> float:
     """
-    e_ta = calc_ambient_vapor_pressure(t_a, r_h) # Get the ambient vapor pressure in Pa
-    t_k = t_a + 273.15 # Convert C to K for absolute temperature
-    rho_ta = (M_W * e_ta) / (R * t_k) # Ideal gas law for water vapor
+    Water vapor density (kg m^-3).
+    Harder & Pomeroy (2013) (A.8)
+    """
+    e_ta = calc_ambient_vapor_pressure(t_a, r_h)
+    if not np.isfinite(e_ta):
+        return np.nan
+
+    t_k = _clamp_T(t_a) + CELSIUS_TO_KELVIN
+    rho_ta = (M_W * e_ta) / (R * t_k)
     return rho_ta
+
 
 # Saturation vapor density
 def calc_saturation_vapor_density(t_a: float) -> float:
-    """Calculate saturation vapor density.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Saturation vapor density (kg m^-3).
-    Reference:
-        Harder & Pomeroy (2013) (A.8)
-    Note:
-        Internally computes saturation vapor pressure (Pa) using the appropriate
-        phase relation (ice for t_a ≤ 0°C, water for t_a > 0°C), then applies Eq. (A.8).
     """
-    e_sat = get_saturation_vapor_pressure(t_a) # Get the saturation vapor pressure in Pa
-    t_k = t_a + 273.15 # Convert C to K for absolute temperature
-    rho_sat = (M_W * e_sat) / (R * t_k) # Ideal gas law for water vapor
+    Saturation vapor density (kg m^-3).
+    Harder & Pomeroy (2013) (A.8)
+    """
+    e_sat = get_saturation_vapor_pressure(t_a)
+    if not np.isfinite(e_sat):
+        return np.nan
+
+    t_k = _clamp_T(t_a) + CELSIUS_TO_KELVIN
+    rho_sat = (M_W * e_sat) / (R * t_k)
     return rho_sat
 
+
 # Thermal conductivity of air
-def calc_thermal_conductivity(t_a:float) -> float:
-    """Calculate the thermal conductivity of air.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Thermal conductivity of air (J m^-1 s^-1 K^-1).
-    Reference:
-        Harder & Pomeroy (2013) (A.9)
+def calc_thermal_conductivity(t_a: float) -> float:
     """
-    lambda_t = 0.000063 * t_a + 0.00673
-    return lambda_t
+    Thermal conductivity of air (J m^-1 s^-1 K^-1).
+    Harder & Pomeroy (2013) (A.9)
+    """
+    t = _clamp_T(t_a)
+    lambda_t = 0.000063 * t + 0.00673
+    # Avoid division by zero in later calculations:
+    return max(lambda_t, 1e-6)
 
-# Latent heat
-def get_latent_heat(t_a:float) -> float:
-    """Gets the latent heat value based on the air temperature.
-        If t_a < 0 degrees Celsius, use sublimation.
-        If t_a >= 0 degrees Celsius, use vaporization.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: The latent heat (J kg^-1), either for sublimation or vaporization depending on t_a.
-    Reference:
-        Harder & Pomeroy (2013) (A.10, A.11)
+
+# Latent heat dispatch
+def get_latent_heat(t_a: float) -> float:
     """
-    if (t_a < 0):
-        l = calc_latent_heat_sublimation(t_a)
+    Latent heat (J kg^-1).
+    Sublimation for T < 0°C, vaporization for T >= 0°C.
+    """
+    if t_a < 0.0:
+        return calc_latent_heat_sublimation(t_a)
     else:
-        l = calc_latent_heat_vaporization(t_a)
-    return l
+        return calc_latent_heat_vaporization(t_a)
 
-def calc_latent_heat_sublimation(t_a:float) -> float:
-    """Calculates the latent heat of sublimation.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Latent heat (J kg^-1).
-    Reference:
-        Harder & Pomeroy (2013) (A.10)
-    """
-    l = 1000 * (2834.1 - 0.29 * t_a - 0.004 * t_a**2) # latent heat of sublimation (T < 0 C)
-    return l
 
-def calc_latent_heat_vaporization(t_a:float) -> float:
-    """Calculates the latent heat of vaporization.
-    Args:
-        t_a (float): Air temperature in degrees Celsius.
-    Returns:
-        float: Latent heat (J kg^-1).
-    Reference:
-        Harder & Pomeroy (2013) (A.11)
+def calc_latent_heat_sublimation(t_a: float) -> float:
     """
-    l = 1000 * (2501 - (2.361 * t_a)) # latent heat of vaporization (T >= 0 C)
-    return l
+    Latent heat of sublimation (J kg^-1).
+    Harder & Pomeroy (2013) (A.10)
+    """
+    t = _clamp_T(t_a, tmin=-80.0, tmax=0.0)
+    return 1000.0 * (2834.1 - 0.29 * t - 0.004 * t**2)
+
+
+def calc_latent_heat_vaporization(t_a: float) -> float:
+    """
+    Latent heat of vaporization (J kg^-1).
+    Harder & Pomeroy (2013) (A.11)
+    """
+    t = _clamp_T(t_a, tmin=0.0, tmax=50.0)
+    return 1000.0 * (2501.0 - 2.361 * t)
